@@ -1,6 +1,8 @@
-
 package org.xbib.elasticsearch.river.jdbc.strategy.simple;
 
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import org.elasticsearch.common.joda.time.DateTime;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.ESLoggerFactory;
@@ -11,6 +13,8 @@ import org.xbib.elasticsearch.river.jdbc.RiverSource;
 import org.xbib.keyvalue.KeyValueStreamListener;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.math.BigDecimal;
 import java.sql.Array;
 import java.sql.Blob;
@@ -41,20 +45,40 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
+import java.util.Random;
 import java.util.TimeZone;
+import java.util.UUID;
+import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.action.search.SearchType;
+import org.elasticsearch.client.Client;
+import org.elasticsearch.client.transport.TransportClient;
+import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.collect.Lists;
+import org.elasticsearch.common.collect.Maps;
+import org.elasticsearch.common.geo.GeoPoint;
+import org.elasticsearch.common.settings.ImmutableSettings;
+import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.transport.InetSocketTransportAddress;
+import org.elasticsearch.index.query.FilterBuilders;
+import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.search.SearchHit;
 
 /**
  * Simple river source.
  *
- * The simple river source iterates through a JDBC result set,
- * merges the rows into Elasticsearch documents, and passes them to
- * a bulk indexer.
+ * The simple river source iterates through a JDBC result set, merges the rows
+ * into Elasticsearch documents, and passes them to a bulk indexer.
  *
  * There are two channels open, one for reading the database, one for writing.
  */
 public class SimpleRiverSource implements RiverSource {
 
     private final ESLogger logger = ESLoggerFactory.getLogger(SimpleRiverSource.class.getName());
+
+    private Client client;
+
+    private Properties properties;
 
     protected RiverContext context;
 
@@ -309,7 +333,7 @@ public class SimpleRiverSource implements RiverSource {
                 statement = prepareQuery(command.getSQL());
                 bind(statement, command.getParameters());
                 results = executeQuery(statement);
-                RiverMouthKeyValueStreamListener<Object,Object> listener = new RiverMouthKeyValueStreamListener<Object,Object>()
+                RiverMouthKeyValueStreamListener<Object, Object> listener = new RiverMouthKeyValueStreamListener<Object, Object>()
                         .output(context.getRiverMouth())
                         .shouldIgnoreNull(context.shouldIgnoreNull());
                 merge(results, listener);
@@ -345,7 +369,7 @@ public class SimpleRiverSource implements RiverSource {
                 register(statement, command.getResults());
             }
             boolean hasRows = statement.execute();
-            RiverMouthKeyValueStreamListener<Object,Object> listener = new RiverMouthKeyValueStreamListener<Object,Object>()
+            RiverMouthKeyValueStreamListener<Object, Object> listener = new RiverMouthKeyValueStreamListener<Object, Object>()
                     .output(context.getRiverMouth());
             if (!hasRows) {
                 // merge from registered params
@@ -365,7 +389,7 @@ public class SimpleRiverSource implements RiverSource {
     /**
      * Merge key/values from JDBC result set
      *
-     * @param results  result set
+     * @param results result set
      * @param listener the value listener
      * @throws SQLException when SQL execution gives an error
      * @throws IOException when input/output error occurs
@@ -395,7 +419,7 @@ public class SimpleRiverSource implements RiverSource {
      * Merge key/values from registered params of a callable statement
      *
      * @param statement callable statement
-     * @param listener  the value listener
+     * @param listener the value listener
      * @throws SQLException when SQL execution gives an error
      * @throws IOException when input/output error occurs
      */
@@ -432,13 +456,13 @@ public class SimpleRiverSource implements RiverSource {
             throw new SQLException("can't connect to source " + url);
         }
         logger().debug("preparing statement with SQL {}", sql);
-        int type =
-                "TYPE_FORWARD_ONLY".equals(context.getResultSetType()) ? ResultSet.TYPE_FORWARD_ONLY :
-                        "TYPE_SCROLL_SENSITIVE".equals(context.getResultSetType()) ? ResultSet.TYPE_SCROLL_SENSITIVE :
-                                "TYPE_SCROLL_INSENSITIVE".equals(context.getResultSetType()) ? ResultSet.TYPE_SCROLL_INSENSITIVE :
-                                        ResultSet.TYPE_FORWARD_ONLY;
-        int concurrency = "CONCUR_READ_ONLY".equals(context.getResultSetConcurrency()) ?
-                ResultSet.CONCUR_READ_ONLY : ResultSet.CONCUR_UPDATABLE;
+        int type
+                = "TYPE_FORWARD_ONLY".equals(context.getResultSetType()) ? ResultSet.TYPE_FORWARD_ONLY
+                : "TYPE_SCROLL_SENSITIVE".equals(context.getResultSetType()) ? ResultSet.TYPE_SCROLL_SENSITIVE
+                : "TYPE_SCROLL_INSENSITIVE".equals(context.getResultSetType()) ? ResultSet.TYPE_SCROLL_INSENSITIVE
+                : ResultSet.TYPE_FORWARD_ONLY;
+        int concurrency = "CONCUR_READ_ONLY".equals(context.getResultSetConcurrency())
+                ? ResultSet.CONCUR_READ_ONLY : ResultSet.CONCUR_UPDATABLE;
         return connection.prepareStatement(sql, type, concurrency);
     }
 
@@ -462,7 +486,7 @@ public class SimpleRiverSource implements RiverSource {
      * Bind values to prepared statement
      *
      * @param statement the prepared statement
-     * @param values    the values to bind
+     * @param values the values to bind
      * @throws SQLException when SQL execution gives an error
      */
     @Override
@@ -481,7 +505,7 @@ public class SimpleRiverSource implements RiverSource {
      * Register variables in callable statement
      *
      * @param statement callable statement
-     * @param values    values
+     * @param values values
      * @return this river source
      * @throws SQLException when SQL execution gives an error
      */
@@ -519,7 +543,7 @@ public class SimpleRiverSource implements RiverSource {
      * Execute query statement
      *
      * @param statement the statement
-     * @param sql       the SQL
+     * @param sql the SQL
      * @return the result set
      * @throws SQLException when SQL execution gives an error
      */
@@ -565,7 +589,7 @@ public class SimpleRiverSource implements RiverSource {
     /**
      * Before rows are read, let the KeyValueStreamListener know about the keys.
      *
-     * @param results  the result set
+     * @param results the result set
      * @param listener the key/value stream listener
      * @throws SQLException when SQL execution gives an error
      * @throws IOException when input/output error occurs
@@ -579,7 +603,11 @@ public class SimpleRiverSource implements RiverSource {
         List<String> keys = new LinkedList();
         for (int i = 1; i <= columns; i++) {
             keys.add(metadata.getColumnLabel(i));
+            if (metadata.getColumnLabel(i).equals("nazione")) {
+                keys.add("locations");
+            }
         }
+        keys.add("validated");
         listener.begin();
         listener.keys(keys);
     }
@@ -588,7 +616,7 @@ public class SimpleRiverSource implements RiverSource {
      * Get next row and prepare the values for processing. The labels of each
      * columns are used for the ValueListener as paths for JSON object merging.
      *
-     * @param results  the result set
+     * @param results the result set
      * @param listener the listener
      * @return true if row exists and was processed, false otherwise
      * @throws SQLException when SQL execution gives an error
@@ -608,7 +636,7 @@ public class SimpleRiverSource implements RiverSource {
      * After the rows keys and values, let the listener know about the end of
      * the result set.
      *
-     * @param results  the result set
+     * @param results the result set
      * @param listener the key/value stream listener
      * @throws SQLException when SQL execution gives an error
      * @throws IOException when input/output error occurs
@@ -617,6 +645,142 @@ public class SimpleRiverSource implements RiverSource {
     public void afterRows(ResultSet results, KeyValueStreamListener listener)
             throws SQLException, IOException {
         listener.end();
+    }
+
+    /**
+     *
+     * @param lon
+     * @param lat
+     * @return Shift the lon lat using a random distance between 1Km
+     */
+    private GeoPoint shiftLonLatPoint(double lat, double lon) {
+        //Earth’s radius, sphere
+        final double earthRadius = 6378137;
+        //offsets in meters
+        Random rand = new Random();
+        double dn = (rand.nextDouble() - 0.5d) * 2000; //Returns a number between [-1000, 1000]
+        double de = (rand.nextDouble() - 0.5d) * 2000;
+//        final double dn = rand.nextInt(1001);
+//        final double de = rand.nextInt(1001);
+//        lon += rand.nextDouble() * 0.001;
+//        lat += rand.nextDouble() * 0.001;
+        //Coordinate offsets in radians             
+        final double dLat = dn / earthRadius;
+        final double dLon = de / (earthRadius * Math.cos(Math.PI * lat / 180));
+        //OffsetPosition, decimal degrees
+        final double latO = lat + dLat * 180 / Math.PI;
+        final double lonO = lon + dLon * 180 / Math.PI;
+        return new GeoPoint(latO, lonO);
+//        return new GeoPoint(lat, lon);
+    }
+
+    private void analyzeColumnLabel(List<Object> values, Object value, String columnLabel,
+            ResultSet result) throws SQLException {
+        if (logger().isTraceEnabled()) {
+            logger().trace("value={} class={}", value, value != null ? value.getClass().getName() : "");
+        }
+        if (!columnLabel.equals("immagine")) {
+            values.add(value);
+            if (columnLabel.equals("nazione")) {
+//                // instance a json mapper
+//                ObjectMapper mapper = new ObjectMapper(); // create once, reuse
+//                Location location = new Location();
+//                if (value != null) {
+//                    location.setAddress(value.toString());
+//                }
+//                location.setLocation(new GeoPoint(14, 45));
+//                // generate json
+//                values.add(Lists.newArrayList(mapper.writeValueAsString(location)));
+                Map<String, Object> json = Maps.<String, Object>newHashMap();
+                json.put("address", value);
+                if (value != null) {
+                    SearchHit[] docs = this.executeGeoNameQuery(value);
+                    if (docs.length != 0) {
+                        logger().info("Found location={}", docs[0].getSourceAsString());
+                        double longitude = Double.parseDouble(docs[0].getSource().get("longitude").toString());
+                        double latitude = Double.parseDouble(docs[0].getSource().get("latitude").toString());
+                        json.put("location", this.shiftLonLatPoint(latitude, longitude));
+                    }
+                }
+                values.add(Lists.newArrayList(json));
+            }
+        } else if (value != null && Strings.hasLength(result.getString("nomefile"))) {
+
+            InputStream is = new ByteArrayInputStream(((byte[]) value));
+            // read it with BufferedReader
+//            BufferedReader br = new BufferedReader(new InputStreamReader(is));
+//            String line;
+            try {
+//                while ((line = br.readLine()) != null) {
+//                    System.out.println(line);
+//                }
+//                br.close();
+                String fileName = UUID.randomUUID() + "-" + result.getString("nomefile");
+
+                Properties properties = this.readProperties();
+                String pathImg = properties.getProperty("imagePath",
+                        System.getProperty("file.separator") + "GeoNews");
+                File dirIMG = new File(pathImg);
+                dirIMG.mkdir();
+                String fileOnDisk = pathImg + System.getProperty("file.separator")
+                        + fileName;
+                logger.info("PATH {}", fileOnDisk);
+                File fileImage = new File(fileOnDisk);
+                OutputStream os = new FileOutputStream(fileImage);
+                byte[] buffer = new byte[1024];
+                int len;
+                while ((len = is.read(buffer)) != -1) {
+                    os.write(buffer, 0, len);
+                }
+                is.close();
+                os.close();
+                String imageURL = properties.getProperty("publicImageURL");
+                values.add(imageURL + System.getProperty("file.separator")
+                        + fileName);
+            } catch (IOException ex) {
+                logger.error("Error writing file image", ex);
+            } catch (SQLException ex) {
+                logger.error("Error writing file image", ex);
+            }
+        } else {
+            values.add(value);
+        }
+    }
+
+    private SearchHit[] executeGeoNameQuery(Object value) {
+        Client client = this.getClient();
+        SearchResponse response = client.prepareSearch("geonames").setSearchType(
+                SearchType.DFS_QUERY_THEN_FETCH).setQuery(
+                        QueryBuilders.filteredQuery(
+                                QueryBuilders.matchQuery("name", value),
+                                //                                        termQuery(
+                                //                                        commonTerms(
+                                //                                        matchQuery(
+                                //                                        fieldQuery("name", value),
+                                FilterBuilders.termFilter("type", "country")))
+                .setFrom(0).setSize(1).setExplain(true).execute().actionGet();
+
+        SearchHit[] docs = response.getHits().getHits();
+        if (docs.length == 0) {
+            response = client.prepareSearch("geonames").setSearchType(
+                    SearchType.DFS_QUERY_THEN_FETCH).setQuery(
+                            QueryBuilders.filteredQuery(
+                                    QueryBuilders.fuzzyQuery("name", value),
+                                    FilterBuilders.termFilter("type", "country")))
+                    .setFrom(0).setSize(1).setExplain(true).execute().actionGet();
+            docs = response.getHits().getHits();
+        }
+        if (docs.length == 0) {
+            response = client.prepareSearch("geonames").setSearchType(
+                    SearchType.DFS_QUERY_THEN_FETCH).setQuery(
+                            QueryBuilders.filteredQuery(
+                                    QueryBuilders.moreLikeThisFieldQuery("name").
+                                    likeText((String) value),
+                                    FilterBuilders.termFilter("type", "country")))
+                    .setFrom(0).setSize(1).setExplain(true).execute().actionGet();
+            docs = response.getHits().getHits();
+        }
+        return docs;
     }
 
     @SuppressWarnings({"unchecked"})
@@ -633,6 +797,7 @@ public class SimpleRiverSource implements RiverSource {
                 if (logger().isTraceEnabled()) {
                     logger().trace("value={} class={}", value, value != null ? value.getClass().getName() : "");
                 }
+                analyzeColumnLabel(values, value, metadata.getColumnLabel(i), results);
                 values.add(value);
                 context.getLastRow().put("$row." + metadata.getColumnLabel(i), value);
             } catch (ParseException e) {
@@ -640,6 +805,7 @@ public class SimpleRiverSource implements RiverSource {
                 values.add(null);
             }
         }
+        values.add(Boolean.FALSE);
         if (listener != null) {
             listener.values(values);
         }
@@ -718,7 +884,7 @@ public class SimpleRiverSource implements RiverSource {
     }
 
     private void prepare(final DatabaseMetaData metaData) throws SQLException {
-        Map<String,Object> m = new HashMap<String,Object>() {
+        Map<String, Object> m = new HashMap<String, Object>() {
             {
                 put("$meta.db.allproceduresarecallable", metaData.allProceduresAreCallable());
                 put("$meta.db.alltablesareselectable", metaData.allTablesAreSelectable());
@@ -774,9 +940,8 @@ public class SimpleRiverSource implements RiverSource {
         context.setLastDatabaseMetadata(m);
     }
 
-
     private void prepare(final ResultSetMetaData metaData) throws SQLException {
-        Map<String,Object> m = new HashMap<String,Object>() {
+        Map<String, Object> m = new HashMap<String, Object>() {
             {
                 put("$meta.row.columnCount", metaData.getColumnCount());
             }
@@ -832,29 +997,29 @@ public class SimpleRiverSource implements RiverSource {
                 statement.setLong(i, context.getLastRowCount());
             } else if ("$last.sql.start".equals(s)) {
                 if (context.getLastExecutionStartDate() == 0L) {
-                    Timestamp riverStarted = context.getRiverFlow() != null ?
-                            new Timestamp(context.getRiverFlow().getFeeder().getRiverState().getStarted().getTime()) : null;
+                    Timestamp riverStarted = context.getRiverFlow() != null
+                            ? new Timestamp(context.getRiverFlow().getFeeder().getRiverState().getStarted().getTime()) : null;
                     context.setLastExecutionStartDate(riverStarted != null ? riverStarted.getTime() : new java.util.Date().getTime());
                 }
                 statement.setTimestamp(i, new Timestamp(context.getLastExecutionStartDate()), calendar);
             } else if ("$last.sql.end".equals(s)) {
                 if (context.getLastExecutionEndDate() == 0L) {
-                    Timestamp riverStarted = context.getRiverFlow() != null ?
-                            new Timestamp(context.getRiverFlow().getFeeder().getRiverState().getStarted().getTime()) : null;
+                    Timestamp riverStarted = context.getRiverFlow() != null
+                            ? new Timestamp(context.getRiverFlow().getFeeder().getRiverState().getStarted().getTime()) : null;
                     context.setLastExecutionEndDate(riverStarted != null ? riverStarted.getTime() : new java.util.Date().getTime());
                 }
                 statement.setTimestamp(i, new Timestamp(context.getLastExecutionEndDate()), calendar);
             } else if ("$last.sql.sequence.start".equals(s)) {
                 if (context.getLastStartDate() == 0L) {
-                    Timestamp riverStarted = context.getRiverFlow() != null ?
-                            new Timestamp(context.getRiverFlow().getFeeder().getRiverState().getStarted().getTime()) : null;
+                    Timestamp riverStarted = context.getRiverFlow() != null
+                            ? new Timestamp(context.getRiverFlow().getFeeder().getRiverState().getStarted().getTime()) : null;
                     context.setLastStartDate(riverStarted != null ? riverStarted.getTime() : new java.util.Date().getTime());
                 }
                 statement.setTimestamp(i, new Timestamp(context.getLastStartDate()), calendar);
             } else if ("$last.sql.sequence.end".equals(s)) {
                 if (context.getLastEndDate() == 0L) {
-                    Timestamp riverStarted = context.getRiverFlow() != null ?
-                            new Timestamp(context.getRiverFlow().getFeeder().getRiverState().getStarted().getTime()) : null;
+                    Timestamp riverStarted = context.getRiverFlow() != null
+                            ? new Timestamp(context.getRiverFlow().getFeeder().getRiverState().getStarted().getTime()) : null;
                     context.setLastEndDate(riverStarted != null ? riverStarted.getTime() : new java.util.Date().getTime());
                 }
                 statement.setTimestamp(i, new Timestamp(context.getLastEndDate()), calendar);
@@ -862,16 +1027,16 @@ public class SimpleRiverSource implements RiverSource {
                 String name = context.getRiverName();
                 statement.setString(i, name);
             } else if ("$river.state.timestamp".equals(s)) {
-                Timestamp timestamp = context.getRiverFlow() != null ?
-                        new Timestamp(context.getRiverFlow().getFeeder().getRiverState().getTimestamp().getTime()) : null;
+                Timestamp timestamp = context.getRiverFlow() != null
+                        ? new Timestamp(context.getRiverFlow().getFeeder().getRiverState().getTimestamp().getTime()) : null;
                 statement.setTimestamp(i, timestamp, calendar);
             } else if ("$river.state.started".equals(s)) {
-                Timestamp started = context.getRiverFlow() != null ?
-                        new Timestamp(context.getRiverFlow().getFeeder().getRiverState().getStarted().getTime()) : null;
+                Timestamp started = context.getRiverFlow() != null
+                        ? new Timestamp(context.getRiverFlow().getFeeder().getRiverState().getStarted().getTime()) : null;
                 statement.setTimestamp(i, started, calendar);
             } else if ("$river.state.counter".equals(s)) {
-                Long counter = context.getRiverFlow() != null ?
-                        context.getRiverFlow().getFeeder().getRiverState().getCounter() : null;
+                Long counter = context.getRiverFlow() != null
+                        ? context.getRiverFlow().getFeeder().getRiverState().getCounter() : null;
                 if (counter != null) {
                     statement.setLong(i, counter);
                 }
@@ -922,8 +1087,8 @@ public class SimpleRiverSource implements RiverSource {
      * Parse of value of result set
      *
      * @param result the result set
-     * @param i      the offset in the result set
-     * @param type   the JDBC type
+     * @param i the offset in the result set
+     * @param type the JDBC type
      * @param locale the locale to use for parsing
      * @return The parse value
      * @throws SQLException when SQL execution gives an error
@@ -976,7 +1141,7 @@ public class SimpleRiverSource implements RiverSource {
              * ResultSet object.
              */
             case Types.ARRAY: {
-            	Array arr = result.getArray(i);
+                Array arr = result.getArray(i);
                 return arr == null ? null : arr.getArray();
             }
             /**
@@ -1500,5 +1665,42 @@ public class SimpleRiverSource implements RiverSource {
             return Types.ROWID;
         }
         return Types.OTHER;
+    }
+
+    private Client getClient() {
+        if (this.client == null) {
+            String geonameServerAddress = this.readProperties().getProperty("geonameServerAddress");
+            String geonameServerPort = this.readProperties().getProperty("geonameServerPort", "9300");
+            String clusterName = this.readProperties().getProperty("clusterName", "elasticsearch");
+            Settings settings = ImmutableSettings.settingsBuilder()
+                    .put("cluster.name", clusterName).build();
+            this.client = new TransportClient(settings).addTransportAddress(
+                    new InetSocketTransportAddress(geonameServerAddress,
+                            Integer.parseInt(geonameServerPort)));
+        }
+        return client;
+    }
+
+    private Properties readProperties() {
+        if (this.properties == null) {
+            properties = new Properties();
+            InputStream input = null;
+            try {
+                input = SimpleRiverSource.class.getResourceAsStream("/config.properties");
+                // load a properties file
+                properties.load(input);
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            } finally {
+                if (input != null) {
+                    try {
+                        input.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }
+        return properties;
     }
 }
