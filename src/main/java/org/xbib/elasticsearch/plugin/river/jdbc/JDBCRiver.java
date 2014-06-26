@@ -76,11 +76,11 @@ public class JDBCRiver extends AbstractRiverComponent implements RunnableRiver, 
     public void start() {
         feeder.setClient(client);
         feeder.setRiverState(new RiverState()
-                        .setEnabled(true)
-                        .setStarted(new Date())
-                        .setName(riverName.getName())
-                        .setType(riverName.getType())
-                        .setCoordinates("_river", riverName.getName(), "_custom")
+                .setEnabled(true)
+                .setStarted(new Date())
+                .setName(riverName.getName())
+                .setType(riverName.getType())
+                .setCoordinates("_river", riverName.getName(), "_custom")
         );
         this.riverThread = EsExecutors.daemonThreadFactory(settings.globalSettings(),
                 "river(" + riverName().getType() + "/" + riverName().getName() + ")")

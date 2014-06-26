@@ -11,10 +11,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.elasticsearch.common.logging.ESLogger;
+import org.elasticsearch.common.logging.ESLoggerFactory;
 
 /**
  */
 public class PlainKeyValueStreamListener<K, V> implements KeyValueStreamListener<K, V> {
+
+    private final static ESLogger logger = ESLoggerFactory.getLogger(PlainKeyValueStreamListener.class.getSimpleName());
 
     /**
      * The current structured object
@@ -55,7 +59,6 @@ public class PlainKeyValueStreamListener<K, V> implements KeyValueStreamListener
         this.shouldIgnoreNull = shouldIgnoreNull;
         return this;
     }
-
 
     /**
      * @return this value listener
@@ -331,6 +334,5 @@ public class PlainKeyValueStreamListener<K, V> implements KeyValueStreamListener
             }
         }
     }
-
 
 }
