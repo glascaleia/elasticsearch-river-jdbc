@@ -76,7 +76,7 @@ public class SimpleRiverSource implements RiverSource {
 
     private final ESLogger logger = ESLoggerFactory.getLogger(SimpleRiverSource.class.getName());
 
-    private Client client;
+    private static final Client client;
 
     private Properties properties;
 
@@ -93,6 +93,38 @@ public class SimpleRiverSource implements RiverSource {
     protected Connection writeConnection;
 
     protected Calendar calendar = Calendar.getInstance(TimeZone.getDefault());
+
+    static {
+        String geonameServerAddress = readProperties().getProperty("geonameServerAddress");
+        String geonameServerPort = readProperties().getProperty("geonameServerPort", "9300");
+        String clusterName = readProperties().getProperty("clusterName", "elasticsearch");
+        Settings settings = ImmutableSettings.settingsBuilder()
+                .put("cluster.name", clusterName).build();
+        client = new TransportClient(settings, true).addTransportAddress(
+                new InetSocketTransportAddress(geonameServerAddress,
+                        Integer.parseInt(geonameServerPort)));
+    }
+
+    private static Properties readProperties() {
+        Properties properties = new Properties();
+        InputStream input = null;
+        try {
+            input = SimpleRiverSource.class.getResourceAsStream("/config.properties");
+            // load a properties file
+            properties.load(input);
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        } finally {
+            if (input != null) {
+                try {
+                    input.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        return properties;
+    }
 
     protected ESLogger logger() {
         return logger;
@@ -748,7 +780,6 @@ public class SimpleRiverSource implements RiverSource {
     }
 
     private SearchHit[] executeGeoNameQuery(Object value) {
-        Client client = this.getClient();
         SearchResponse response = client.prepareSearch("geonames").setSearchType(
                 SearchType.DFS_QUERY_THEN_FETCH).setQuery(
                         QueryBuilders.filteredQuery(
@@ -798,7 +829,6 @@ public class SimpleRiverSource implements RiverSource {
                     logger().trace("value={} class={}", value, value != null ? value.getClass().getName() : "");
                 }
                 analyzeColumnLabel(values, value, metadata.getColumnLabel(i), results);
-                values.add(value);
                 context.getLastRow().put("$row." + metadata.getColumnLabel(i), value);
             } catch (ParseException e) {
                 logger().warn("parse error for value {}, using null instead", results.getObject(i));
@@ -1665,42 +1695,5 @@ public class SimpleRiverSource implements RiverSource {
             return Types.ROWID;
         }
         return Types.OTHER;
-    }
-
-    private Client getClient() {
-        if (this.client == null) {
-            String geonameServerAddress = this.readProperties().getProperty("geonameServerAddress");
-            String geonameServerPort = this.readProperties().getProperty("geonameServerPort", "9300");
-            String clusterName = this.readProperties().getProperty("clusterName", "elasticsearch");
-            Settings settings = ImmutableSettings.settingsBuilder()
-                    .put("cluster.name", clusterName).build();
-            this.client = new TransportClient(settings).addTransportAddress(
-                    new InetSocketTransportAddress(geonameServerAddress,
-                            Integer.parseInt(geonameServerPort)));
-        }
-        return client;
-    }
-
-    private Properties readProperties() {
-        if (this.properties == null) {
-            properties = new Properties();
-            InputStream input = null;
-            try {
-                input = SimpleRiverSource.class.getResourceAsStream("/config.properties");
-                // load a properties file
-                properties.load(input);
-            } catch (IOException ex) {
-                ex.printStackTrace();
-            } finally {
-                if (input != null) {
-                    try {
-                        input.close();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }
-        }
-        return properties;
     }
 }

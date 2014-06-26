@@ -1,4 +1,3 @@
-
 package org.xbib.elasticsearch.river.jdbc.strategy.simple;
 
 import org.elasticsearch.action.delete.DeleteRequest;
@@ -190,6 +189,6 @@ public class SimpleRiverMouth implements RiverMouth {
     @Override
     public void close() throws IOException {
         // keep open, do not close or shut down ingest object here...  we need it for cleanup
-    }
+        }
 
 }

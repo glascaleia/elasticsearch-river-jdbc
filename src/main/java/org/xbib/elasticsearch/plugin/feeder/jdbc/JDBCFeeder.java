@@ -1,12 +1,20 @@
-
 package org.xbib.elasticsearch.plugin.feeder.jdbc;
 
+import java.io.IOException;
+import java.net.URI;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TimeZone;
 import org.elasticsearch.common.collect.ImmutableSet;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.ESLoggerFactory;
+import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
 import org.elasticsearch.common.settings.loader.JsonSettingsLoader;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
+import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import org.elasticsearch.common.xcontent.support.XContentMapValues;
 import org.xbib.elasticsearch.action.river.state.RiverState;
 import org.xbib.elasticsearch.plugin.feeder.AbstractFeeder;
@@ -25,17 +33,6 @@ import org.xbib.pipeline.Pipeline;
 import org.xbib.pipeline.PipelineProvider;
 import org.xbib.pipeline.PipelineRequest;
 
-import java.io.IOException;
-import java.net.URI;
-import java.util.Date;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.TimeZone;
-
-import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
-import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
-
 public class JDBCFeeder<T, R extends PipelineRequest, P extends Pipeline<T, R>>
         extends AbstractFeeder<T, R, P> {
 
@@ -47,15 +44,16 @@ public class JDBCFeeder<T, R extends PipelineRequest, P extends Pipeline<T, R>>
     protected RiverContext riverContext;
 
     /**
-     * River name, default is "feeder". If feeder runs ins river mode, this can be overwritten
+     * River name, default is "feeder". If feeder runs ins river mode, this can
+     * be overwritten
      */
     private String name = "feeder";
 
     /**
-     *  A default index that may be optionally declared. This index is created beforehand and configured
-     *  to bulk mode before the feeder starts.
+     * A default index that may be optionally declared. This index is created
+     * beforehand and configured to bulk mode before the feeder starts.
      */
-    private String defaultIndex;
+    protected String defaultIndex;
 
     public JDBCFeeder() {
     }
@@ -166,7 +164,6 @@ public class JDBCFeeder<T, R extends PipelineRequest, P extends Pipeline<T, R>>
         }
         // we don't know if this is the last run. Stop bulk for now, make indexed documents visible for search
         stopBulk();
-
     }
 
     protected void createRiverContext(String riverType, String riverName, Map<String, Object> mySettings) throws IOException {
@@ -184,7 +181,7 @@ public class JDBCFeeder<T, R extends PipelineRequest, P extends Pipeline<T, R>>
         int maxrows = XContentMapValues.nodeIntegerValue(mySettings.get("max_rows"), 0);
         int maxretries = XContentMapValues.nodeIntegerValue(mySettings.get("max_retries"), 3);
         TimeValue maxretrywait = XContentMapValues.nodeTimeValue(mySettings.get("max_retries_wait"),
-                        TimeValue.timeValueSeconds(30));
+                TimeValue.timeValueSeconds(30));
         String locale = XContentMapValues.nodeStringValue(mySettings.get("locale"),
                 LocaleUtil.fromLocale(Locale.getDefault()));
         String resultSetType = XContentMapValues.nodeStringValue(mySettings.get("resultset_type"),
@@ -285,7 +282,6 @@ public class JDBCFeeder<T, R extends PipelineRequest, P extends Pipeline<T, R>>
     private void startBulk() {
         try {
             if (!ingest.client().admin().indices().prepareExists(defaultIndex).execute().actionGet().isExists()) {
-                logger.info("creating index {} and enabling bulk mode", defaultIndex);
                 ingest.newIndex(defaultIndex);
             }
             ingest.startBulk(defaultIndex);
@@ -297,11 +293,10 @@ public class JDBCFeeder<T, R extends PipelineRequest, P extends Pipeline<T, R>>
     private void stopBulk() {
         State state = ingest.getState();
         if (state.indices() != null && !state.indices().isEmpty()) {
+            logger.info("stopping bulk mode for indices {}...", state.indices());
             for (String index : ImmutableSet.copyOf(state.indices())) {
-                logger.info("stopping bulk mode for index {} and refreshing...", index);
                 try {
                     ingest.stopBulk(index);
-                    ingest.refresh(index);
                 } catch (IOException e) {
                     logger.error(e.getMessage(),e);
                 }

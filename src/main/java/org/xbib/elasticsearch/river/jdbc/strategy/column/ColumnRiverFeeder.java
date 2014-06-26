@@ -1,4 +1,3 @@
-
 package org.xbib.elasticsearch.river.jdbc.strategy.column;
 
 import org.elasticsearch.action.get.GetResponse;
@@ -19,21 +18,24 @@ import org.xbib.pipeline.PipelineRequest;
 import java.io.IOException;
 import java.util.Date;
 import java.util.Map;
+import org.elasticsearch.action.admin.indices.create.CreateIndexRequestBuilder;
+import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
+import org.elasticsearch.common.Strings;
 
 public class ColumnRiverFeeder<T, R extends PipelineRequest, P extends Pipeline<T, R>>
-        extends JDBCFeeder<T,R,P> {
+        extends JDBCFeeder<T, R, P> {
 
     private final static ESLogger logger = ESLoggerFactory.getLogger(ColumnRiverFeeder.class.getSimpleName());
 
-    public ColumnRiverFeeder(){
+    public ColumnRiverFeeder() {
         super();
     }
-    
+
     @SuppressWarnings("rawtypes")
-    public ColumnRiverFeeder(ColumnRiverFeeder feeder){
+    public ColumnRiverFeeder(ColumnRiverFeeder feeder) {
         super(feeder);
     }
-    
+
     @Override
     protected void createRiverContext(String riverType, String riverName, Map<String, Object> mySettings) throws IOException {
         super.createRiverContext(riverType, riverName, mySettings);
@@ -47,9 +49,45 @@ public class ColumnRiverFeeder<T, R extends PipelineRequest, P extends Pipeline<
                 .columnUpdatedAt(columnUpdatedAt)
                 .columnDeletedAt(columnDeletedAt)
                 .columnEscape(columnEscape);
+        if (!ingest.client().admin().indices().prepareExists(defaultIndex).execute().actionGet().isExists()) {
+            CreateIndexRequestBuilder builder = this.getClient().admin().indices().prepareCreate(defaultIndex);
+            if (Strings.hasLength(settings.toString())) {
+                builder.setSettings(settings);
+            }
+            logger.info("@@@@@@@@@@@@@@@@ createRiverContext");
+            logger.info("@@@@@@@@@@@@@@@@ settings:{}", settings);
+            CreateIndexResponse createIndexResponse = builder.execute().actionGet();
+            while (!createIndexResponse.isAcknowledged()) {
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ex) {
+                    logger.error("Error on sleeping thread: {}", ex);
+                }
+            }
+            this.addLocationsMapping();
+        }
     }
 
-        @Override
+    private void addLocationsMapping() {
+        String mappingLocations = null;
+        try {
+            mappingLocations = XContentFactory.jsonBuilder().startObject().
+                    startObject(getType()).startObject("properties")
+                    .startObject("locations").startObject("properties").
+                    startObject("location").field("type", "geo_point").field("lat_lon", true).
+                    endObject().startObject("address").field("type", "string").
+                    endObject().endObject().endObject().endObject().endObject().string();
+            logger.info("**************** Prima di creare mapping: {}", mappingLocations);
+        } catch (IOException ex) {
+            logger.error("Error on adding Locations Mapping {}", ex.getMessage());
+        }
+        this.getClient().admin().indices().preparePutMapping(defaultIndex).setType(getType()).
+                setSource(mappingLocations).execute().actionGet();
+//        ingest.addMapping(getType(), mappingLocations);
+        logger.info("**************** Mapping creato: {}", mappingLocations);
+    }
+
+    @Override
     public void executeTask(Map<String, Object> map) throws Exception {
         logger.info("processing map {}", map);
         createRiverContext("jdbc", "feeder", map);
@@ -79,7 +117,6 @@ public class ColumnRiverFeeder<T, R extends PipelineRequest, P extends Pipeline<
         writeTimesToJdbcSettings(lastRunTime, currentTime);
         riverContext.getRiverSource().fetch();
         writeCustomInfo(currentTime.millis());
-
 
         if (logger.isDebugEnabled()) {
             logger.debug("fetched, flushing");
@@ -138,14 +175,14 @@ public class ColumnRiverFeeder<T, R extends PipelineRequest, P extends Pipeline<
         settings.put(ColumnRiverFlow.LAST_RUN_TIME, lastRunTime);
         settings.put(ColumnRiverFlow.CURRENT_RUN_STARTED_TIME, currentTime);
     }
-    
+
     @Override
     @SuppressWarnings({"rawtypes", "unchecked"})
     public PipelineProvider<P> pipelineProvider() {
         return new PipelineProvider<P>() {
             @Override
             public P get() {
-                return  (P) new ColumnRiverFeeder(ColumnRiverFeeder.this);
+                return (P) new ColumnRiverFeeder(ColumnRiverFeeder.this);
             }
         };
     }
